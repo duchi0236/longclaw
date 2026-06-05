@@ -1,3 +1,13 @@
+# LongClaw - legal fork of OpenClaw
+
+LongClaw is a legal fork of [OpenClaw](https://github.com/openclaw/openclaw),
+initially imported from upstream commit
+`38e142657b67edb82fdf26b98c1d04f5f68e5d98`.
+
+The original MIT license and third-party notices are preserved in
+[`LICENSE`](LICENSE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and
+[`FORK_NOTICE.md`](FORK_NOTICE.md). The upstream README begins below.
+
 # 🦞 OpenClaw — Personal AI Assistant
 
 <p align="center">
