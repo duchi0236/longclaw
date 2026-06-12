@@ -257,115 +257,125 @@ export class LoopRuntime {
           break;
         }
         case "tool_call": {
-          if (toolCallsLeft !== null && toolCallsLeft <= 0) {
-            return finishTurn({ status: "budget-exhausted", responses, detail: "tool calls" });
+          // One assistant decision: optional text plus a batch of calls,
+          // mirroring how one model message carries text and tool calls.
+          if (action.text) {
+            session.entries.push({ kind: "assistant", text: action.text });
+            responses.push(action.text);
           }
-          const manifest = snapshot.capabilities.find((c) => c.name === action.capability);
-          if (!manifest) {
-            // Unreachable: validation checked snapshot membership.
-            session.entries.push({
-              kind: "system",
-              text: `action rejected: unknown capability ${action.capability}`,
-            });
-            break;
-          }
-
-          const decision = resolveRiskDecision(manifest.riskClass, deps.policy);
-          if (decision === "deny") {
-            emit({
-              kind: "approval_resolved",
-              sessionId: input.sessionId,
-              capability: action.capability,
-              riskClass: manifest.riskClass,
-              decision: "deny",
-            });
-            session.entries.push({
-              kind: "system",
-              text: `tool call denied by ${deps.policy} policy: ${action.capability}`,
-            });
-            break;
-          }
-          if (decision === "ask") {
-            const verdict = await deps.approvalGate.decide({
-              sessionId: input.sessionId,
-              capability: action.capability,
-              riskClass: manifest.riskClass,
-              args: action.args,
-            });
-            emit({
-              kind: "approval_resolved",
-              sessionId: input.sessionId,
-              capability: action.capability,
-              riskClass: manifest.riskClass,
-              decision: verdict === "allow" ? "user-allowed" : "user-denied",
-            });
-            if (verdict === "deny") {
+          // Calls execute sequentially in model order; denials skip a call
+          // but never abort the rest of the batch, matching agent-core.
+          for (const call of action.calls) {
+            if (toolCallsLeft !== null && toolCallsLeft <= 0) {
+              return finishTurn({ status: "budget-exhausted", responses, detail: "tool calls" });
+            }
+            const manifest = snapshot.capabilities.find((c) => c.name === call.capability);
+            if (!manifest) {
+              // Unreachable: validation checked snapshot membership.
               session.entries.push({
                 kind: "system",
-                text: `tool call denied by user: ${action.capability}`,
+                text: `action rejected: unknown capability ${call.capability}`,
               });
-              break;
+              continue;
             }
-          } else {
-            emit({
-              kind: "approval_resolved",
-              sessionId: input.sessionId,
-              capability: action.capability,
-              riskClass: manifest.riskClass,
-              decision: "allow",
-            });
-          }
 
-          toolCalls += 1;
-          if (toolCallsLeft !== null) {
-            toolCallsLeft -= 1;
-          }
-          const callId = `${input.sessionId}:${session.usedIdempotencyKeys.size + 1}`;
-          session.usedIdempotencyKeys.add(action.idempotencyKey);
-          session.entries.push({
-            kind: "tool_call",
-            callId,
-            capability: action.capability,
-            args: action.args,
-          });
+            const decision = resolveRiskDecision(manifest.riskClass, deps.policy);
+            if (decision === "deny") {
+              emit({
+                kind: "approval_resolved",
+                sessionId: input.sessionId,
+                capability: call.capability,
+                riskClass: manifest.riskClass,
+                decision: "deny",
+              });
+              session.entries.push({
+                kind: "system",
+                text: `tool call denied by ${deps.policy} policy: ${call.capability}`,
+              });
+              continue;
+            }
+            if (decision === "ask") {
+              const verdict = await deps.approvalGate.decide({
+                sessionId: input.sessionId,
+                capability: call.capability,
+                riskClass: manifest.riskClass,
+                args: call.args,
+              });
+              emit({
+                kind: "approval_resolved",
+                sessionId: input.sessionId,
+                capability: call.capability,
+                riskClass: manifest.riskClass,
+                decision: verdict === "allow" ? "user-allowed" : "user-denied",
+              });
+              if (verdict === "deny") {
+                session.entries.push({
+                  kind: "system",
+                  text: `tool call denied by user: ${call.capability}`,
+                });
+                continue;
+              }
+            } else {
+              emit({
+                kind: "approval_resolved",
+                sessionId: input.sessionId,
+                capability: call.capability,
+                riskClass: manifest.riskClass,
+                decision: "allow",
+              });
+            }
 
-          const startedAt = performance.now();
-          try {
-            const result = await lease.provider.invoke(lease.handle, {
-              callId,
-              capability: action.capability,
-              args: action.args,
-              idempotencyKey: action.idempotencyKey,
-            });
-            emit({
-              kind: "tool_call_finished",
-              sessionId: input.sessionId,
-              capability: action.capability,
-              isError: result.isError,
-              replayed: result.replayed ?? false,
-              durationMs: performance.now() - startedAt,
-            });
+            toolCalls += 1;
+            if (toolCallsLeft !== null) {
+              toolCallsLeft -= 1;
+            }
+            const callId = `${input.sessionId}:${session.usedIdempotencyKeys.size + 1}`;
+            session.usedIdempotencyKeys.add(call.idempotencyKey);
             session.entries.push({
-              kind: "tool_result",
+              kind: "tool_call",
               callId,
-              capability: action.capability,
-              isError: result.isError,
-              output: result.output,
+              capability: call.capability,
+              args: call.args,
             });
-          } catch (error) {
-            if (error instanceof SandboxUnavailableError) {
-              const detail = error.message;
-              emit({ kind: "sandbox_suspended", sessionId: input.sessionId, detail });
+
+            const startedAt = performance.now();
+            try {
+              const result = await lease.provider.invoke(lease.handle, {
+                callId,
+                capability: call.capability,
+                args: call.args,
+                idempotencyKey: call.idempotencyKey,
+              });
+              emit({
+                kind: "tool_call_finished",
+                sessionId: input.sessionId,
+                capability: call.capability,
+                isError: result.isError,
+                replayed: result.replayed ?? false,
+                durationMs: performance.now() - startedAt,
+              });
               session.entries.push({
                 kind: "tool_result",
                 callId,
-                capability: action.capability,
-                isError: true,
-                output: `sandbox unavailable; session suspended (${detail})`,
+                capability: call.capability,
+                isError: result.isError,
+                output: result.output,
               });
-              return finishTurn({ status: "suspended", responses, detail });
+            } catch (error) {
+              if (error instanceof SandboxUnavailableError) {
+                const detail = error.message;
+                emit({ kind: "sandbox_suspended", sessionId: input.sessionId, detail });
+                session.entries.push({
+                  kind: "tool_result",
+                  callId,
+                  capability: call.capability,
+                  isError: true,
+                  output: `sandbox unavailable; session suspended (${detail})`,
+                });
+                return finishTurn({ status: "suspended", responses, detail });
+              }
+              throw error;
             }
-            throw error;
           }
           break;
         }

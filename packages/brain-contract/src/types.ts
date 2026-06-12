@@ -67,17 +67,38 @@ export interface PlanUpdate {
   steps: PlanStep[];
 }
 
+/** Tool definition handed to the model through the inference port. */
+export interface InferenceToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+/** One tool call the model asked for in an assistant response. */
+export interface InferenceToolCall {
+  /** Model-assigned call id; unique within one response only. */
+  id: string;
+  name: string;
+  args: unknown;
+}
+
 /** Request the brain sends through the injected inference port. */
 export interface InferenceRequest {
   /** Logical model tier; the runtime maps tiers to concrete models. */
   tier: "fast" | "strong";
   system?: string;
-  prompt: string;
+  /** Conversation visible to the model, oldest first. */
+  messages: readonly ConversationEntry[];
+  /** Tools the model may call; derived from the capability snapshot. */
+  tools?: InferenceToolDefinition[];
 }
 
-/** Result returned by the inference port. */
+/** Result returned by the inference port: one assistant message. */
 export interface InferenceResult {
+  /** Assistant text; may be empty when the model only calls tools. */
   text: string;
+  /** Tool calls the model wants executed, in model order. */
+  toolCalls?: InferenceToolCall[];
   tokensUsed: number;
 }
 
@@ -115,14 +136,25 @@ export interface BrainContext {
   infer: InferencePort;
 }
 
+/** One capability invocation inside a tool-call batch. */
+export interface ToolCallSpec {
+  capability: string;
+  args: unknown;
+  /** Caller-chosen key making retries safe; unique per logical call. */
+  idempotencyKey: string;
+}
+
 /** The next thing the runtime should do on the brain's behalf. */
 export type BrainAction =
   | {
       kind: "tool_call";
-      capability: string;
-      args: unknown;
-      /** Caller-chosen key making retries safe; unique per logical call. */
-      idempotencyKey: string;
+      /**
+       * Assistant text accompanying the calls. Mirrors model output shape:
+       * one assistant message may carry text and tool calls together.
+       */
+      text?: string;
+      /** Calls from one assistant decision, executed as a batch in order. */
+      calls: ToolCallSpec[];
     }
   | { kind: "respond"; text: string }
   | { kind: "plan"; plan: PlanUpdate }

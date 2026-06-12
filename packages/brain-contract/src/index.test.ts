@@ -21,29 +21,51 @@ const baseCtx = {
 };
 
 describe("validateBrainAction", () => {
-  it("accepts a tool call for a capability in the snapshot", () => {
+  it("accepts a batch of calls for capabilities in the snapshot", () => {
     expect(
       validateBrainAction(
-        { kind: "tool_call", capability: "fs.read", args: { path: "a.txt" }, idempotencyKey: "k1" },
+        {
+          kind: "tool_call",
+          calls: [
+            { capability: "fs.read", args: { path: "a.txt" }, idempotencyKey: "k1" },
+            { capability: "exec.run", args: { command: "ls" }, idempotencyKey: "k2" },
+          ],
+        },
         baseCtx,
       ),
     ).toEqual({ ok: true });
   });
 
-  it("rejects tool calls for capabilities outside the snapshot", () => {
+  it("rejects empty batches", () => {
+    expect(validateBrainAction({ kind: "tool_call", calls: [] }, baseCtx).ok).toBe(false);
+  });
+
+  it("rejects calls for capabilities outside the snapshot", () => {
     const result = validateBrainAction(
-      { kind: "tool_call", capability: "web.search", args: {}, idempotencyKey: "k1" },
+      { kind: "tool_call", calls: [{ capability: "web.search", args: {}, idempotencyKey: "k1" }] },
       baseCtx,
     );
     expect(result.ok).toBe(false);
   });
 
-  it("rejects reused idempotency keys", () => {
-    const result = validateBrainAction(
-      { kind: "tool_call", capability: "fs.read", args: {}, idempotencyKey: "k1" },
+  it("rejects idempotency keys reused across the session or within a batch", () => {
+    const reusedAcrossSession = validateBrainAction(
+      { kind: "tool_call", calls: [{ capability: "fs.read", args: {}, idempotencyKey: "k1" }] },
       { ...baseCtx, usedIdempotencyKeys: new Set(["k1"]) },
     );
-    expect(result.ok).toBe(false);
+    expect(reusedAcrossSession.ok).toBe(false);
+
+    const reusedWithinBatch = validateBrainAction(
+      {
+        kind: "tool_call",
+        calls: [
+          { capability: "fs.read", args: {}, idempotencyKey: "k2" },
+          { capability: "exec.run", args: {}, idempotencyKey: "k2" },
+        ],
+      },
+      baseCtx,
+    );
+    expect(reusedWithinBatch.ok).toBe(false);
   });
 
   it("requires plan revisions to increment by exactly one", () => {

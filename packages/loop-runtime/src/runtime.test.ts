@@ -66,15 +66,19 @@ describe("LoopRuntime end to end", () => {
         [
           {
             kind: "tool_call",
-            capability: "fs.write",
-            args: { path: "src/fix.ts", content: "export const fixed = true;" },
-            idempotencyKey: "write-1",
-          },
-          {
-            kind: "tool_call",
-            capability: "exec.run",
-            args: { command: "npm test" },
-            idempotencyKey: "exec-1",
+            text: "Let me fix and verify.",
+            calls: [
+              {
+                capability: "fs.write",
+                args: { path: "src/fix.ts", content: "export const fixed = true;" },
+                idempotencyKey: "write-1",
+              },
+              {
+                capability: "exec.run",
+                args: { command: "npm test" },
+                idempotencyKey: "exec-1",
+              },
+            ],
           },
           { kind: "respond", text: "Fixed and tested." },
           { kind: "finish", summary: "wrote fix and ran tests" },
@@ -87,7 +91,7 @@ describe("LoopRuntime end to end", () => {
 
     expect(result.status).toBe("finished");
     expect(result.summary).toBe("wrote fix and ran tests");
-    expect(result.responses).toEqual(["Fixed and tested."]);
+    expect(result.responses).toEqual(["Let me fix and verify.", "Fixed and tested."]);
     expect(sandbox.files.get("src/fix.ts")).toBe("export const fixed = true;");
     expect(sandbox.invocations.map((i) => i.capability)).toEqual(["fs.write", "exec.run"]);
 
@@ -99,6 +103,7 @@ describe("LoopRuntime end to end", () => {
     const entries = runtime.sessionEntries("session-1");
     expect(entries.map((e) => e.kind)).toEqual([
       "user",
+      "assistant",
       "tool_call",
       "tool_result",
       "tool_call",
@@ -121,9 +126,9 @@ describe("LoopRuntime end to end", () => {
       brain: scriptedBrain([
         {
           kind: "tool_call",
-          capability: "exec.run",
-          args: { command: "rm -rf dist" },
-          idempotencyKey: "exec-1",
+          calls: [
+            { capability: "exec.run", args: { command: "rm -rf dist" }, idempotencyKey: "exec-1" },
+          ],
         },
         (ctx) => {
           const lastEntry = ctx.entries.at(-1);
@@ -156,9 +161,9 @@ describe("LoopRuntime end to end", () => {
       brain: scriptedBrain([
         {
           kind: "tool_call",
-          capability: "fs.write",
-          args: { path: "a.txt", content: "x" },
-          idempotencyKey: "w1",
+          calls: [
+            { capability: "fs.write", args: { path: "a.txt", content: "x" }, idempotencyKey: "w1" },
+          ],
         },
         { kind: "finish", summary: "done" },
       ]),
@@ -180,9 +185,7 @@ describe("LoopRuntime end to end", () => {
           counter += 1;
           return {
             kind: "tool_call" as const,
-            capability: "fs.list",
-            args: {},
-            idempotencyKey: `list-${counter}`,
+            calls: [{ capability: "fs.list", args: {}, idempotencyKey: `list-${counter}` }],
           };
         }),
       ),
@@ -200,7 +203,7 @@ describe("LoopRuntime end to end", () => {
       inference: () => Promise.resolve({ text: "thinking", tokensUsed: 60 }),
       brain: scriptedBrain(
         Array.from({ length: 5 }, () => async (ctx: BrainContext): Promise<BrainAction> => {
-          await ctx.infer({ tier: "fast", prompt: "think" });
+          await ctx.infer({ tier: "fast", messages: ctx.entries });
           return { kind: "respond", text: "still thinking" };
         }),
       ),
@@ -215,7 +218,10 @@ describe("LoopRuntime end to end", () => {
   it("feeds contract violations back to the brain as system entries", async () => {
     const { runtime, events } = buildRuntime({
       brain: scriptedBrain([
-        { kind: "tool_call", capability: "web.search", args: {}, idempotencyKey: "k1" },
+        {
+          kind: "tool_call",
+          calls: [{ capability: "web.search", args: {}, idempotencyKey: "k1" }],
+        },
         (ctx) => {
           const rejection = ctx.entries.find((e) => e.kind === "system");
           return { kind: "finish", summary: rejection?.text ?? "no rejection seen" };
@@ -238,9 +244,7 @@ describe("LoopRuntime end to end", () => {
           sandbox.setHealthy(false);
           return {
             kind: "tool_call",
-            capability: "fs.list",
-            args: {},
-            idempotencyKey: "k1",
+            calls: [{ capability: "fs.list", args: {}, idempotencyKey: "k1" }],
           };
         },
         { kind: "respond", text: "should never run" },

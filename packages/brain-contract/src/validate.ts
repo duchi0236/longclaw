@@ -31,20 +31,32 @@ export function validateBrainAction(
 ): BrainActionValidation {
   switch (action.kind) {
     case "tool_call": {
-      if (!action.idempotencyKey) {
-        return { ok: false, reason: "tool_call requires a non-empty idempotencyKey" };
+      // The whole batch is validated before any call executes, so a contract
+      // violation never leaves a half-executed batch behind.
+      if (action.calls.length === 0) {
+        return { ok: false, reason: "tool_call requires at least one call" };
       }
-      if (ctx.usedIdempotencyKeys.has(action.idempotencyKey)) {
-        return {
-          ok: false,
-          reason: `idempotencyKey "${action.idempotencyKey}" was already used in this session`,
-        };
-      }
-      if (!ctx.capabilities.some((c) => c.name === action.capability)) {
-        return {
-          ok: false,
-          reason: `capability "${action.capability}" is not in this session's snapshot`,
-        };
+      const batchKeys = new Set<string>();
+      for (const call of action.calls) {
+        if (!call.idempotencyKey) {
+          return { ok: false, reason: "every call requires a non-empty idempotencyKey" };
+        }
+        if (
+          batchKeys.has(call.idempotencyKey) ||
+          ctx.usedIdempotencyKeys.has(call.idempotencyKey)
+        ) {
+          return {
+            ok: false,
+            reason: `idempotencyKey "${call.idempotencyKey}" was already used in this session`,
+          };
+        }
+        batchKeys.add(call.idempotencyKey);
+        if (!ctx.capabilities.some((c) => c.name === call.capability)) {
+          return {
+            ok: false,
+            reason: `capability "${call.capability}" is not in this session's snapshot`,
+          };
+        }
       }
       return { ok: true };
     }
