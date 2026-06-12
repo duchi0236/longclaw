@@ -45,7 +45,17 @@ export type ConversationEntry =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "system"; text: string }
-  | { kind: "tool_call"; callId: string; capability: string; args: unknown }
+  | {
+      kind: "tool_call";
+      callId: string;
+      capability: string;
+      args: unknown;
+      /**
+       * Persisted so a session rebuilt from its entry log alone knows every
+       * key already spent; required for safe resume after a restart.
+       */
+      idempotencyKey: string;
+    }
   | { kind: "tool_result"; callId: string; capability: string; isError: boolean; output: string };
 
 /** A single step in a deep-mode plan. */

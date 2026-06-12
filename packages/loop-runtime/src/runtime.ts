@@ -27,6 +27,7 @@ import {
   type SandboxBinding,
   type SandboxRouter,
 } from "../../sandbox-core/src/index.js";
+import type { SessionStore } from "../../session-store/src/index.js";
 import type { RuntimeEventSink } from "./events.js";
 
 /** Decision interface for "ask"-class calls; UIs route this to any device. */
@@ -53,6 +54,11 @@ export interface LoopRuntimeDeps {
   entitlements?: CapabilityEntitlements;
   telemetry?: RuntimeEventSink;
   spawnSubtask?: SubtaskRunner;
+  /**
+   * Durable session storage. Without it sessions are process-local; with it
+   * any runtime instance can resume a session from the store.
+   */
+  store?: SessionStore;
   /** Hard cap on brain steps per turn, independent of budgets. */
   maxStepsPerTurn?: number;
 }
@@ -111,8 +117,14 @@ export class LoopRuntime {
   async runTurn(input: TurnInput): Promise<TurnResult> {
     const { deps } = this;
     const emit = deps.telemetry ?? (() => {});
-    const session = this.sessionFor(input.sessionId);
+    const session = await this.sessionFor(input.sessionId);
     const responses: string[] = [];
+    // Single persistence point: every entry visible to the brain is durable
+    // before the loop moves on, so a crashed turn resumes consistently.
+    const append = async (entry: ConversationEntry): Promise<void> => {
+      session.entries.push(entry);
+      await deps.store?.appendEntries(input.sessionId, [entry]);
+    };
 
     let tokensLeft = input.budget?.tokens ?? null;
     let toolCallsLeft = input.budget?.toolCalls ?? null;
@@ -154,7 +166,7 @@ export class LoopRuntime {
       });
     }
 
-    session.entries.push({ kind: "user", text: input.userMessage });
+    await append({ kind: "user", text: input.userMessage });
 
     const meteredInfer: InferencePort = async (request) => {
       if (tokensLeft !== null && tokensLeft <= 0) {
@@ -217,18 +229,19 @@ export class LoopRuntime {
           action: action.kind,
           reason: validation.reason,
         });
-        session.entries.push({ kind: "system", text: `action rejected: ${validation.reason}` });
+        await append({ kind: "system", text: `action rejected: ${validation.reason}` });
         continue;
       }
 
       switch (action.kind) {
         case "respond": {
-          session.entries.push({ kind: "assistant", text: action.text });
+          await append({ kind: "assistant", text: action.text });
           responses.push(action.text);
           break;
         }
         case "plan": {
           session.plan = { revision: action.plan.revision, steps: action.plan.steps };
+          await deps.store?.savePlan(input.sessionId, session.plan);
           break;
         }
         case "ask_user": {
@@ -243,14 +256,14 @@ export class LoopRuntime {
         }
         case "spawn": {
           if (!deps.spawnSubtask) {
-            session.entries.push({
+            await append({
               kind: "system",
               text: "spawn rejected: subtasks are not enabled for this runtime",
             });
             break;
           }
           const outcome = await deps.spawnSubtask(input.sessionId, action.subtask);
-          session.entries.push({
+          await append({
             kind: "system",
             text: `subtask "${action.subtask.title}" finished: ${outcome}`,
           });
@@ -260,7 +273,7 @@ export class LoopRuntime {
           // One assistant decision: optional text plus a batch of calls,
           // mirroring how one model message carries text and tool calls.
           if (action.text) {
-            session.entries.push({ kind: "assistant", text: action.text });
+            await append({ kind: "assistant", text: action.text });
             responses.push(action.text);
           }
           // Calls execute sequentially in model order; denials skip a call
@@ -272,7 +285,7 @@ export class LoopRuntime {
             const manifest = snapshot.capabilities.find((c) => c.name === call.capability);
             if (!manifest) {
               // Unreachable: validation checked snapshot membership.
-              session.entries.push({
+              await append({
                 kind: "system",
                 text: `action rejected: unknown capability ${call.capability}`,
               });
@@ -288,7 +301,7 @@ export class LoopRuntime {
                 riskClass: manifest.riskClass,
                 decision: "deny",
               });
-              session.entries.push({
+              await append({
                 kind: "system",
                 text: `tool call denied by ${deps.policy} policy: ${call.capability}`,
               });
@@ -309,7 +322,7 @@ export class LoopRuntime {
                 decision: verdict === "allow" ? "user-allowed" : "user-denied",
               });
               if (verdict === "deny") {
-                session.entries.push({
+                await append({
                   kind: "system",
                   text: `tool call denied by user: ${call.capability}`,
                 });
@@ -331,11 +344,12 @@ export class LoopRuntime {
             }
             const callId = `${input.sessionId}:${session.usedIdempotencyKeys.size + 1}`;
             session.usedIdempotencyKeys.add(call.idempotencyKey);
-            session.entries.push({
+            await append({
               kind: "tool_call",
               callId,
               capability: call.capability,
               args: call.args,
+              idempotencyKey: call.idempotencyKey,
             });
 
             const startedAt = performance.now();
@@ -354,7 +368,7 @@ export class LoopRuntime {
                 replayed: result.replayed ?? false,
                 durationMs: performance.now() - startedAt,
               });
-              session.entries.push({
+              await append({
                 kind: "tool_result",
                 callId,
                 capability: call.capability,
@@ -365,7 +379,7 @@ export class LoopRuntime {
               if (error instanceof SandboxUnavailableError) {
                 const detail = error.message;
                 emit({ kind: "sandbox_suspended", sessionId: input.sessionId, detail });
-                session.entries.push({
+                await append({
                   kind: "tool_result",
                   callId,
                   capability: call.capability,
@@ -389,12 +403,26 @@ export class LoopRuntime {
     });
   }
 
-  private sessionFor(sessionId: string): SessionState {
-    let session = this.sessions.get(sessionId);
-    if (!session) {
-      session = { entries: [], usedIdempotencyKeys: new Set() };
-      this.sessions.set(sessionId, session);
+  private async sessionFor(sessionId: string): Promise<SessionState> {
+    const cached = this.sessions.get(sessionId);
+    if (cached) {
+      return cached;
     }
+    const persisted = await this.deps.store?.load(sessionId);
+    // Spent idempotency keys rebuild from the entry log itself, so the store
+    // only ever has to persist one append-only stream per session.
+    const session: SessionState = persisted
+      ? {
+          entries: [...persisted.entries],
+          ...(persisted.plan ? { plan: persisted.plan } : {}),
+          usedIdempotencyKeys: new Set(
+            persisted.entries.flatMap((entry) =>
+              entry.kind === "tool_call" ? [entry.idempotencyKey] : [],
+            ),
+          ),
+        }
+      : { entries: [], usedIdempotencyKeys: new Set() };
+    this.sessions.set(sessionId, session);
     return session;
   }
 }
