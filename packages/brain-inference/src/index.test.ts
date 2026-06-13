@@ -22,6 +22,8 @@ import {
 import {
   assistantMessageToResult,
   createInferencePort,
+  decodeToolName,
+  encodeToolName,
   entriesToMessages,
   toolDefinitionsToTools,
 } from "./index.js";
@@ -144,24 +146,47 @@ describe("entriesToMessages", () => {
 });
 
 describe("toolDefinitionsToTools and assistantMessageToResult", () => {
-  it("maps tool definitions to llm-core tools", () => {
+  it("encodes dotted capability names to provider-safe tool names", () => {
+    // OpenAI/DeepSeek reject dots in tool names; the dot maps to an underscore.
+    expect(encodeToolName("fs.read")).toBe("fs_read");
+    expect(decodeToolName("fs_read")).toBe("fs.read");
+    expect(decodeToolName(encodeToolName("exec.run"))).toBe("exec.run");
+  });
+
+  it("maps tool definitions to llm-core tools with encoded names", () => {
     const tools = toolDefinitionsToTools([
       { name: "fs.read", description: "read a file", inputSchema: { type: "object" } },
     ]);
     expect(tools).toEqual([
-      { name: "fs.read", description: "read a file", parameters: { type: "object" } },
+      { name: "fs_read", description: "read a file", parameters: { type: "object" } },
     ]);
   });
 
-  it("extracts text, tool calls, and token usage from an assistant message", () => {
+  it("decodes tool call names back to capability names", () => {
     const result = assistantMessageToResult(
-      assistant("here", [{ id: "x", name: "fs.read", arguments: { path: "a" } }], 42),
+      assistant("here", [{ id: "x", name: "fs_read", arguments: { path: "a" } }], 42),
     );
     expect(result).toEqual({
       text: "here",
       toolCalls: [{ id: "x", name: "fs.read", args: { path: "a" } }],
       tokensUsed: 42,
     });
+  });
+
+  it("surfaces a model error as text instead of silent empty output", () => {
+    const errored: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: MODEL.api,
+      provider: MODEL.provider,
+      model: MODEL.id,
+      usage: { ...ZERO_USAGE, totalTokens: 3 },
+      stopReason: "error",
+      errorMessage: "400 bad tool name",
+      timestamp: 0,
+    };
+    const result = assistantMessageToResult(errored);
+    expect(result).toEqual({ text: "400 bad tool name", tokensUsed: 3 });
   });
 });
 
@@ -224,12 +249,13 @@ describe("createInferencePort integration", () => {
     expect(resultIds).toHaveLength(2);
     expect(resultIds).toEqual(callIds);
 
-    // The first call advertised the capability tools to the model.
+    // The first call advertised the capability tools to the model, with names
+    // encoded to provider-safe form (dots become underscores).
     expect(contexts[0]!.tools?.map((t) => t.name).toSorted()).toEqual([
-      "exec.run",
-      "fs.list",
-      "fs.read",
-      "fs.write",
+      "exec_run",
+      "fs_list",
+      "fs_read",
+      "fs_write",
     ]);
   });
 });

@@ -119,26 +119,50 @@ export function entriesToMessages(entries: readonly ConversationEntry[], model: 
   return messages;
 }
 
-/** Maps neutral tool definitions to llm-core tools. The capability input
- * schema is already a JSON Schema, which providers consume as the parameter
- * schema directly. */
+// Capability names are dotted family paths (fs.read), but OpenAI/DeepSeek tool
+// names must match ^[a-zA-Z0-9_-]+$ — no dots. Encode the dot as an underscore
+// (snake_case, which models emit faithfully) and decode on the way back.
+// Capability name segments never contain underscores (see
+// CAPABILITY_NAME_PATTERN), so the mapping is unambiguous and reversible.
+const DOT = ".";
+const ENCODED_DOT = "_";
+
+export function encodeToolName(capability: string): string {
+  return capability.replaceAll(DOT, ENCODED_DOT);
+}
+
+export function decodeToolName(toolName: string): string {
+  return toolName.replaceAll(ENCODED_DOT, DOT);
+}
+
+/** Maps neutral tool definitions to llm-core tools. Tool names are encoded to
+ * satisfy provider name constraints; the capability input schema is already a
+ * JSON Schema, which providers consume as the parameter schema directly. */
 export function toolDefinitionsToTools(definitions: readonly InferenceToolDefinition[]): Tool[] {
   return definitions.map((def) => ({
-    name: def.name,
+    name: encodeToolName(def.name),
     description: def.description,
     parameters: def.inputSchema as unknown as Tool["parameters"],
   }));
 }
 
-/** Maps the model's reply back into a neutral InferenceResult. */
+/** Maps the model's reply back into a neutral InferenceResult. A model error
+ * (stopReason "error") surfaces as text so the turn does not silently look
+ * like "no output"; tool names are decoded back to capability names. */
 export function assistantMessageToResult(message: AssistantMessage): InferenceResult {
   const text = message.content
     .filter((block): block is TextContent => block.type === "text")
     .map((block) => block.text)
     .join("");
+  if (message.stopReason === "error") {
+    return {
+      text: text || (message.errorMessage ?? "inference failed"),
+      tokensUsed: message.usage.totalTokens,
+    };
+  }
   const toolCalls = message.content
     .filter((block): block is ToolCall => block.type === "toolCall")
-    .map((block) => ({ id: block.id, name: block.name, args: block.arguments }));
+    .map((block) => ({ id: block.id, name: decodeToolName(block.name), args: block.arguments }));
   return {
     text,
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
