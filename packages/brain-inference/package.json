@@ -1,0 +1,9 @@
+{
+  "name": "@openclaw/brain-inference",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
