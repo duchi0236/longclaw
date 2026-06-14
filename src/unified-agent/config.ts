@@ -30,6 +30,8 @@ export interface ModelConfig {
  * an in-memory, ask-before-acting agent. */
 export interface AgentConfig {
   model: ModelConfig;
+  /** Agent mode = which brain drives the loop. Defaults to "standard". */
+  mode?: "standard" | "deep";
   store?: SessionStoreConfig;
   policy?: ExecutionPolicy;
   systemPrompt?: string;

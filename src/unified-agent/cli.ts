@@ -19,7 +19,11 @@ const SYSTEM_PROMPT =
   "fs.read, fs.write, fs.list, and exec.run tools to inspect and change files " +
   "and run commands rather than only describing them. Be concise.";
 
-const MODE = { id: "standard", maxParallelToolCalls: 1, planningEnabled: false };
+function modeConfig(mode: "standard" | "deep") {
+  return mode === "deep"
+    ? { id: "deep", maxParallelToolCalls: 1, planningEnabled: true }
+    : { id: "standard", maxParallelToolCalls: 1, planningEnabled: false };
+}
 
 function printEvent(event: RuntimeEvent): void {
   if (event.kind === "tool_call_finished") {
@@ -32,12 +36,19 @@ function printEvent(event: RuntimeEvent): void {
   }
 }
 
-async function runTurn(agent: UnifiedAgent, sessionId: string, message: string): Promise<void> {
+type Mode = ReturnType<typeof modeConfig>;
+
+async function runTurn(
+  agent: UnifiedAgent,
+  sessionId: string,
+  message: string,
+  mode: Mode,
+): Promise<void> {
   const result = await agent.runtime.runTurn({
     sessionId,
     userMessage: message,
     binding: { kind: "cloud-general" },
-    mode: MODE,
+    mode,
   });
   for (const response of result.responses) {
     process.stdout.write(`\n${response}\n`);
@@ -49,7 +60,7 @@ async function runTurn(agent: UnifiedAgent, sessionId: string, message: string):
   }
 }
 
-async function repl(agent: UnifiedAgent, rl: Interface): Promise<void> {
+async function repl(agent: UnifiedAgent, rl: Interface, mode: Mode): Promise<void> {
   process.stdout.write("unified agent ready. type a message, or 'exit' to quit.\n");
   for (;;) {
     const input = (await rl.question("\n> ")).trim();
@@ -59,7 +70,7 @@ async function repl(agent: UnifiedAgent, rl: Interface): Promise<void> {
     if (input === "exit" || input === "quit") {
       break;
     }
-    await runTurn(agent, "cli", input);
+    await runTurn(agent, "cli", input, mode);
   }
 }
 
@@ -71,6 +82,7 @@ async function main(): Promise<void> {
   const agent = startAgent(
     {
       model: DEEPSEEK_MODEL,
+      mode: options.mode,
       policy: options.policy,
       systemPrompt: SYSTEM_PROMPT,
       ...(options.db ? { store: { kind: "sqlite", path: options.db } } : {}),
@@ -90,12 +102,15 @@ async function main(): Promise<void> {
     },
   );
 
-  process.stdout.write(`workspace: ${workspaceRoot}  ·  policy: ${options.policy}\n`);
+  const mode = modeConfig(options.mode);
+  process.stdout.write(
+    `workspace: ${workspaceRoot}  ·  mode: ${options.mode}  ·  policy: ${options.policy}\n`,
+  );
   try {
     if (options.prompt) {
-      await runTurn(agent, "cli", options.prompt);
+      await runTurn(agent, "cli", options.prompt, mode);
     } else {
-      await repl(agent, rl);
+      await repl(agent, rl, mode);
     }
   } finally {
     agent.close();

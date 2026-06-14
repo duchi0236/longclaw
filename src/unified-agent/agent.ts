@@ -3,6 +3,7 @@
 // the LLM call is injected (see inference.ts for the production wiring), the
 // sandbox providers default to in-memory, and the store comes from config.
 
+import { createDeepBrain } from "../../packages/brain-deep/src/index.js";
 import { createInferencePort, type CompleteFn } from "../../packages/brain-inference/src/index.js";
 import { createStandardBrain } from "../../packages/brain-standard/src/index.js";
 import {
@@ -44,6 +45,12 @@ const AUTO_APPROVE: ApprovalGate = { decide: () => Promise.resolve("allow") };
 export function createUnifiedAgent(config: AgentConfig, deps: UnifiedAgentDeps): UnifiedAgent {
   const model = buildModel(config.model);
 
+  // The mode selects the brain — the one place a stronger agent is chosen.
+  // Both run on the identical runtime, capabilities, and sandbox below.
+  const brainOptions = config.systemPrompt ? { systemPrompt: config.systemPrompt } : {};
+  const brain =
+    config.mode === "deep" ? createDeepBrain(brainOptions) : createStandardBrain(brainOptions);
+
   const router = new SandboxRouter();
   for (const provider of deps.sandboxProviders ?? [new MemorySandbox()]) {
     router.register(provider);
@@ -52,7 +59,7 @@ export function createUnifiedAgent(config: AgentConfig, deps: UnifiedAgentDeps):
   const storeHandle = config.store ? createSessionStore(config.store) : undefined;
 
   const runtime = new LoopRuntime({
-    brain: createStandardBrain(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}),
+    brain,
     manifests: CORE_CAPABILITY_MANIFESTS,
     router,
     inference: createInferencePort({ resolveModel: () => model, complete: deps.complete }),

@@ -5,17 +5,34 @@ import { parseCliArgs } from "./cli-args.js";
 
 describe("parseCliArgs", () => {
   it("applies defaults with no arguments", () => {
-    expect(parseCliArgs([])).toEqual({ workspace: "./agent-workspace", policy: "ask" });
+    expect(parseCliArgs([])).toEqual({
+      workspace: "./agent-workspace",
+      policy: "ask",
+      mode: "standard",
+    });
   });
 
-  it("parses workspace, db, and policy flags", () => {
+  it("parses workspace, db, policy, and mode flags", () => {
     expect(
-      parseCliArgs(["--workspace", "/tmp/w", "--db", "/tmp/a.sqlite", "--policy", "auto"]),
-    ).toEqual({ workspace: "/tmp/w", db: "/tmp/a.sqlite", policy: "auto" });
+      parseCliArgs([
+        "--workspace",
+        "/tmp/w",
+        "--db",
+        "/tmp/a.sqlite",
+        "--policy",
+        "auto",
+        "--mode",
+        "deep",
+      ]),
+    ).toEqual({ workspace: "/tmp/w", db: "/tmp/a.sqlite", policy: "auto", mode: "deep" });
   });
 
   it("treats --auto as a shorthand for the auto policy", () => {
     expect(parseCliArgs(["--auto"]).policy).toBe("auto");
+  });
+
+  it("rejects an invalid mode", () => {
+    expect(() => parseCliArgs(["--mode", "galaxy"])).toThrow(/mode/);
   });
 
   it("collects a trailing prompt into a one-shot message", () => {
