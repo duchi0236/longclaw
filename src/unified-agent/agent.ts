@@ -5,7 +5,11 @@
 
 import { createInferencePort, type CompleteFn } from "../../packages/brain-inference/src/index.js";
 import { createStandardBrain } from "../../packages/brain-standard/src/index.js";
-import { LoopRuntime, type ApprovalGate } from "../../packages/loop-runtime/src/index.js";
+import {
+  LoopRuntime,
+  type ApprovalGate,
+  type RuntimeEventSink,
+} from "../../packages/loop-runtime/src/index.js";
 import {
   CORE_CAPABILITY_MANIFESTS,
   MemorySandbox,
@@ -23,6 +27,8 @@ export interface UnifiedAgentDeps {
   approvalGate?: ApprovalGate;
   /** Sandbox backends to register; defaults to a single in-memory sandbox. */
   sandboxProviders?: SandboxProvider[];
+  /** Telemetry sink for runtime events (tool calls, approvals, turns). */
+  telemetry?: RuntimeEventSink;
 }
 
 /** A built agent plus ownership of its resources. */
@@ -54,6 +60,7 @@ export function createUnifiedAgent(config: AgentConfig, deps: UnifiedAgentDeps):
     policy: config.policy ?? "ask",
     ...(config.entitlements ? { entitlements: config.entitlements } : {}),
     ...(storeHandle ? { store: storeHandle.store } : {}),
+    ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
   });
 
   return {
