@@ -5,6 +5,7 @@ export * from "./client-node-protocol.js";
 export * from "./client-node-sandbox.js";
 export * from "./core-capabilities.js";
 export * from "./gateway-node-invoker.js";
+export * from "./local-sandbox.js";
 export * from "./memory-sandbox.js";
 export * from "./node-invoker.js";
 export * from "./provider.js";
