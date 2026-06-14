@@ -31,7 +31,7 @@ export interface ModelConfig {
 export interface AgentConfig {
   model: ModelConfig;
   /** Agent mode = which brain drives the loop. Defaults to "standard". */
-  mode?: "standard" | "deep";
+  mode?: "standard" | "deep" | "team";
   store?: SessionStoreConfig;
   policy?: ExecutionPolicy;
   systemPrompt?: string;

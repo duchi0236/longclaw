@@ -129,6 +129,11 @@ export interface SubtaskSpec {
   capabilityPatterns?: string[];
 }
 
+/** Prefix on the system entry the runtime appends after running a spawn
+ * batch. Orchestrator brains key off it to tell "already delegated" from
+ * "not yet" without tracking their own state. */
+export const SUBTASK_RESULTS_MARKER = "[subtask results]";
+
 /** Question the brain wants the user to answer before continuing. */
 export interface Elicitation {
   question: string;
@@ -168,7 +173,8 @@ export type BrainAction =
     }
   | { kind: "respond"; text: string }
   | { kind: "plan"; plan: PlanUpdate }
-  | { kind: "spawn"; subtask: SubtaskSpec }
+  /** Delegate a batch of subtasks; the runtime runs them and reports back. */
+  | { kind: "spawn"; subtasks: SubtaskSpec[] }
   | { kind: "ask_user"; elicitation: Elicitation }
   | { kind: "finish"; summary: string };
 

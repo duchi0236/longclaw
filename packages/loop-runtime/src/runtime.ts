@@ -4,6 +4,7 @@
 // changes rarely; brains and tools evolve on either side of it.
 
 import {
+  SUBTASK_RESULTS_MARKER,
   unmetBrainRequirements,
   validateBrainAction,
   type AgentBrain,
@@ -262,10 +263,18 @@ export class LoopRuntime {
             });
             break;
           }
-          const outcome = await deps.spawnSubtask(input.sessionId, action.subtask);
+          const runner = deps.spawnSubtask;
+          // Subtasks run in parallel — the orchestration payoff. Results are
+          // reported back as one marked system entry the brain synthesizes.
+          const results = await Promise.all(
+            action.subtasks.map(async (spec) => {
+              const outcome = await runner(input.sessionId, spec);
+              return `- ${spec.title}: ${outcome}`;
+            }),
+          );
           await append({
             kind: "system",
-            text: `subtask "${action.subtask.title}" finished: ${outcome}`,
+            text: `${SUBTASK_RESULTS_MARKER}\n${results.join("\n")}`,
           });
           break;
         }

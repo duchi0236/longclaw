@@ -85,10 +85,15 @@ export function validateBrainAction(
       return action.elicitation.question.length > 0
         ? { ok: true }
         : { ok: false, reason: "ask_user requires a non-empty question" };
-    case "spawn":
-      return action.subtask.instructions.length > 0
-        ? { ok: true }
-        : { ok: false, reason: "spawn requires non-empty instructions" };
+    case "spawn": {
+      if (action.subtasks.length === 0) {
+        return { ok: false, reason: "spawn requires at least one subtask" };
+      }
+      if (action.subtasks.some((subtask) => subtask.instructions.length === 0)) {
+        return { ok: false, reason: "every subtask requires non-empty instructions" };
+      }
+      return { ok: true };
+    }
   }
 }
 

@@ -14,7 +14,7 @@ export interface CliOptions {
   /** Execution policy for tool calls. */
   policy: ExecutionPolicy;
   /** Agent mode: which brain drives the loop. */
-  mode: "standard" | "deep";
+  mode: "standard" | "deep" | "team";
   /** One-shot prompt; when set, run a single turn and exit. */
   prompt?: string;
 }
@@ -31,7 +31,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let workspace = "./agent-workspace";
   let db: string | undefined;
   let policy: ExecutionPolicy = "ask";
-  let mode: "standard" | "deep" = "standard";
+  let mode: "standard" | "deep" | "team" = "standard";
   const positionals: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -60,8 +60,8 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       }
       case "--mode": {
         const value = argv[++i];
-        if (value !== "standard" && value !== "deep") {
-          throw new Error("--mode must be standard or deep");
+        if (value !== "standard" && value !== "deep" && value !== "team") {
+          throw new Error("--mode must be standard, deep, or team");
         }
         mode = value;
         break;

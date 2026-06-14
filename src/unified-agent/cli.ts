@@ -19,10 +19,12 @@ const SYSTEM_PROMPT =
   "fs.read, fs.write, fs.list, and exec.run tools to inspect and change files " +
   "and run commands rather than only describing them. Be concise.";
 
-function modeConfig(mode: "standard" | "deep") {
-  return mode === "deep"
-    ? { id: "deep", maxParallelToolCalls: 1, planningEnabled: true }
-    : { id: "standard", maxParallelToolCalls: 1, planningEnabled: false };
+function modeConfig(mode: "standard" | "deep" | "team") {
+  return {
+    id: mode,
+    maxParallelToolCalls: 1,
+    planningEnabled: mode === "deep",
+  };
 }
 
 function printEvent(event: RuntimeEvent): void {

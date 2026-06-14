@@ -284,17 +284,20 @@ describe("LoopRuntime end to end", () => {
     expect(result.question).toBe("Which branch should I target?");
   });
 
-  it("runs spawned subtasks through the runner hook when enabled", async () => {
+  it("runs a batch of spawned subtasks in parallel through the runner hook", async () => {
     const spawned: string[] = [];
     const { runtime } = buildRuntime({
       spawnSubtask: (_sessionId, spec) => {
         spawned.push(spec.title);
-        return Promise.resolve("subtask ok");
+        return Promise.resolve(`${spec.title} done`);
       },
       brain: scriptedBrain([
         {
           kind: "spawn",
-          subtask: { title: "refactor module A", instructions: "do it" },
+          subtasks: [
+            { title: "module A", instructions: "refactor A" },
+            { title: "module B", instructions: "refactor B" },
+          ],
         },
         (ctx) => {
           const note = ctx.entries.at(-1);
@@ -308,8 +311,10 @@ describe("LoopRuntime end to end", () => {
 
     const result = await runtime.runTurn(turnInput());
 
-    expect(spawned).toEqual(["refactor module A"]);
-    expect(result.summary).toContain('subtask "refactor module A" finished: subtask ok');
+    expect(spawned.toSorted()).toEqual(["module A", "module B"]);
+    expect(result.summary).toContain("[subtask results]");
+    expect(result.summary).toContain("module A: module A done");
+    expect(result.summary).toContain("module B: module B done");
   });
 
   it("keeps plan state across plan actions and validates revisions", async () => {
