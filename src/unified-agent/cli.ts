@@ -28,13 +28,17 @@ function modeConfig(mode: "standard" | "deep" | "team") {
 }
 
 function printEvent(event: RuntimeEvent): void {
+  // Subtask sessions are "<parent>:sub:<title>"; label their events so team
+  // mode shows which delegated worker is acting.
+  const subIndex = event.sessionId.indexOf(":sub:");
+  const label = subIndex === -1 ? "" : `[${event.sessionId.slice(subIndex + 5)}] `;
   if (event.kind === "tool_call_finished") {
     const status = event.isError ? "error" : "ok";
-    process.stdout.write(`  · ${event.capability} → ${status}\n`);
+    process.stdout.write(`  · ${label}${event.capability} → ${status}\n`);
   } else if (event.kind === "approval_resolved" && event.decision === "deny") {
-    process.stdout.write(`  · ${event.capability} denied\n`);
+    process.stdout.write(`  · ${label}${event.capability} denied\n`);
   } else if (event.kind === "sandbox_suspended") {
-    process.stdout.write(`  · sandbox unavailable: ${event.detail}\n`);
+    process.stdout.write(`  · ${label}sandbox unavailable: ${event.detail}\n`);
   }
 }
 

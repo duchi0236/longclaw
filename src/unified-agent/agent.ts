@@ -64,6 +64,9 @@ interface WorkerContext {
   approvalGate: ApprovalGate;
   policy: ExecutionPolicy;
   brainOptions: BrainOptions;
+  /** Telemetry sink shared with the orchestrator; subtask events carry their
+   * own `<parent>:sub:<title>` session id so consumers can tell them apart. */
+  telemetry?: RuntimeEventSink;
 }
 
 /** Runs one subtask as a standard-brain sub-agent on the SAME inference,
@@ -81,6 +84,7 @@ function runSubtask(
     inference: ctx.inference,
     approvalGate: ctx.approvalGate,
     policy: ctx.policy,
+    ...(ctx.telemetry ? { telemetry: ctx.telemetry } : {}),
   });
   return subRuntime
     .runTurn({
@@ -120,6 +124,7 @@ export function createUnifiedAgent(config: AgentConfig, deps: UnifiedAgentDeps):
             approvalGate,
             policy,
             brainOptions,
+            ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
           })
       : undefined;
 

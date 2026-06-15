@@ -4,7 +4,8 @@
 // model returns (dots become underscores) to exercise the decode path.
 import { afterEach, describe, expect, it } from "vitest";
 import type { CompleteFn } from "../../packages/brain-inference/src/index.js";
-import type { AssistantMessage, Model } from "../../packages/llm-core/src/index.js";
+import type { AssistantMessage, Context, Model } from "../../packages/llm-core/src/index.js";
+import type { RuntimeEvent } from "../../packages/loop-runtime/src/index.js";
 import { MemorySandbox } from "../../packages/sandbox-core/src/index.js";
 import { buildModel, createUnifiedAgent, DEEPSEEK_MODEL, type AgentConfig } from "./index.js";
 
@@ -140,6 +141,77 @@ describe("createUnifiedAgent", () => {
     await agent.runtime.runTurn(turnInput("write x"));
     expect(asked).toBe(true);
     expect(sandbox.files.has("a.txt")).toBe(false);
+  });
+});
+
+// Routes by prompt content, not call order, because team-mode subtasks run
+// concurrently and interleave with the orchestrator's calls.
+function teamComplete(): CompleteFn {
+  const build = (model: Model, text: string, toolName?: string): AssistantMessage => {
+    const content: AssistantMessage["content"] = [];
+    if (text) {
+      content.push({ type: "text", text });
+    }
+    if (toolName) {
+      content.push({ type: "toolCall", id: "t", name: toolName, arguments: {} });
+    }
+    return {
+      role: "assistant",
+      content,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: {
+        input: 0,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: toolName ? "toolUse" : "stop",
+      timestamp: 0,
+    };
+  };
+  return (model: Model, context: Context) => {
+    const system = context.systemPrompt ?? "";
+    if (system.includes("independent subtasks")) {
+      return Promise.resolve(build(model, "1. First part\n2. Second part"));
+    }
+    if (system.includes("Synthesize")) {
+      return Promise.resolve(build(model, "Final combined answer."));
+    }
+    // Subtask worker: list once, then finish.
+    const hasToolResult = context.messages.some((message) => message.role === "toolResult");
+    return Promise.resolve(
+      hasToolResult ? build(model, "subtask done") : build(model, "", "fs_list"),
+    );
+  };
+}
+
+describe("team mode", () => {
+  it("passes subtask tool telemetry through to the shared sink", async () => {
+    const events: RuntimeEvent[] = [];
+    const agent = createUnifiedAgent(
+      { model: TEST_MODEL, mode: "team", policy: "auto" },
+      {
+        complete: teamComplete(),
+        sandboxProviders: [new MemorySandbox()],
+        telemetry: (event) => events.push(event),
+      },
+    );
+    agents.push(agent);
+
+    const result = await agent.runtime.runTurn(turnInput("do two things"));
+    expect(result.status).toBe("finished");
+    expect(result.summary).toBe("Final combined answer.");
+
+    // Each delegated subtask ran a tool, and those events reached the sink
+    // tagged with the subtask session id.
+    const subtaskToolEvents = events.filter(
+      (event) => event.kind === "tool_call_finished" && event.sessionId.includes(":sub:"),
+    );
+    expect(subtaskToolEvents.length).toBeGreaterThanOrEqual(2);
   });
 });
 
