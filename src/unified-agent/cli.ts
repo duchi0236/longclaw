@@ -13,6 +13,7 @@ import { createInterface, type Interface } from "node:readline/promises";
 import { DatabaseSync } from "node:sqlite";
 import type { RuntimeEvent, RuntimeEventSink } from "../../packages/loop-runtime/src/index.js";
 import { LocalSandbox } from "../../packages/sandbox-core/src/index.js";
+import { OtlpTraceExporter } from "../../packages/telemetry-otlp/src/index.js";
 import {
   evaluatePurification,
   SqliteTelemetryStore,
@@ -99,6 +100,11 @@ async function main(): Promise<void> {
     mkdirSync(path.dirname(path.resolve(options.telemetryDb)), { recursive: true });
     telemetryStore = new SqliteTelemetryStore(new DatabaseSync(options.telemetryDb));
     sinks.push(telemetryStore.asSink());
+  }
+  // OTLP export sends standard GenAI traces to an independent tool (Phoenix,
+  // Langfuse, …) for visualization — decoupled from this process.
+  if (options.otlpEndpoint) {
+    sinks.push(new OtlpTraceExporter({ endpoint: options.otlpEndpoint }).asSink());
   }
   const telemetry: RuntimeEventSink = (event) => {
     for (const sink of sinks) {

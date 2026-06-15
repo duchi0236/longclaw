@@ -13,6 +13,8 @@ export interface CliOptions {
   db?: string;
   /** SQLite telemetry DB path; undefined disables telemetry persistence. */
   telemetryDb?: string;
+  /** OTLP/HTTP traces endpoint; undefined disables trace export. */
+  otlpEndpoint?: string;
   /** Execution policy for tool calls. */
   policy: ExecutionPolicy;
   /** Agent mode: which brain drives the loop. */
@@ -33,6 +35,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let workspace = "./agent-workspace";
   let db: string | undefined;
   let telemetryDb: string | undefined;
+  let otlpEndpoint: string | undefined;
   let policy: ExecutionPolicy = "ask";
   let mode: "standard" | "deep" | "team" = "standard";
   const positionals: string[] = [];
@@ -42,7 +45,8 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     switch (arg) {
       case "--workspace":
       case "--db":
-      case "--telemetry-db": {
+      case "--telemetry-db":
+      case "--otlp-endpoint": {
         const value = argv[++i];
         if (value === undefined) {
           throw new Error(`${arg} requires a value`);
@@ -51,8 +55,10 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
           workspace = value;
         } else if (arg === "--db") {
           db = value;
-        } else {
+        } else if (arg === "--telemetry-db") {
           telemetryDb = value;
+        } else {
+          otlpEndpoint = value;
         }
         break;
       }
@@ -87,6 +93,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     workspace,
     ...(db !== undefined ? { db } : {}),
     ...(telemetryDb !== undefined ? { telemetryDb } : {}),
+    ...(otlpEndpoint !== undefined ? { otlpEndpoint } : {}),
     policy,
     mode,
     ...(positionals.length > 0 ? { prompt: positionals.join(" ") } : {}),
