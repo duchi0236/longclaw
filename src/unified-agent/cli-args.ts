@@ -11,6 +11,8 @@ export interface CliOptions {
   workspace: string;
   /** SQLite session DB path; undefined means in-memory (no persistence). */
   db?: string;
+  /** SQLite telemetry DB path; undefined disables telemetry persistence. */
+  telemetryDb?: string;
   /** Execution policy for tool calls. */
   policy: ExecutionPolicy;
   /** Agent mode: which brain drives the loop. */
@@ -30,6 +32,7 @@ function isPolicy(value: string): value is ExecutionPolicy {
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   let workspace = "./agent-workspace";
   let db: string | undefined;
+  let telemetryDb: string | undefined;
   let policy: ExecutionPolicy = "ask";
   let mode: "standard" | "deep" | "team" = "standard";
   const positionals: string[] = [];
@@ -38,15 +41,18 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     const arg = argv[i]!;
     switch (arg) {
       case "--workspace":
-      case "--db": {
+      case "--db":
+      case "--telemetry-db": {
         const value = argv[++i];
         if (value === undefined) {
           throw new Error(`${arg} requires a value`);
         }
         if (arg === "--workspace") {
           workspace = value;
-        } else {
+        } else if (arg === "--db") {
           db = value;
+        } else {
+          telemetryDb = value;
         }
         break;
       }
@@ -80,6 +86,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   return {
     workspace,
     ...(db !== undefined ? { db } : {}),
+    ...(telemetryDb !== undefined ? { telemetryDb } : {}),
     policy,
     mode,
     ...(positionals.length > 0 ? { prompt: positionals.join(" ") } : {}),

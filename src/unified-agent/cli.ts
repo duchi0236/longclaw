@@ -7,10 +7,13 @@
 //   DEEPSEEK_API_KEY=... node_modules/.bin/tsx src/unified-agent/cli.ts \
 //     --workspace ./work --policy ask
 //
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { createInterface, type Interface } from "node:readline/promises";
-import type { RuntimeEvent } from "../../packages/loop-runtime/src/index.js";
+import { DatabaseSync } from "node:sqlite";
+import type { RuntimeEvent, RuntimeEventSink } from "../../packages/loop-runtime/src/index.js";
 import { LocalSandbox } from "../../packages/sandbox-core/src/index.js";
+import { SqliteTelemetryStore } from "../../packages/telemetry-store/src/index.js";
 import { parseCliArgs } from "./cli-args.js";
 import { DEEPSEEK_MODEL, startAgent, type UnifiedAgent } from "./index.js";
 
@@ -85,6 +88,21 @@ async function main(): Promise<void> {
   const workspaceRoot = path.resolve(options.workspace);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
+  // Telemetry is persisted only when a path is given; the same sink also prints
+  // live progress, so tool-quality data accrues without changing the loop.
+  let telemetryStore: SqliteTelemetryStore | undefined;
+  const sinks: RuntimeEventSink[] = [printEvent];
+  if (options.telemetryDb) {
+    mkdirSync(path.dirname(path.resolve(options.telemetryDb)), { recursive: true });
+    telemetryStore = new SqliteTelemetryStore(new DatabaseSync(options.telemetryDb));
+    sinks.push(telemetryStore.asSink());
+  }
+  const telemetry: RuntimeEventSink = (event) => {
+    for (const sink of sinks) {
+      sink(event);
+    }
+  };
+
   const agent = startAgent(
     {
       model: DEEPSEEK_MODEL,
@@ -95,7 +113,7 @@ async function main(): Promise<void> {
     },
     {
       sandboxProviders: [new LocalSandbox({ workspaceRoot })],
-      telemetry: printEvent,
+      telemetry,
       approvalGate: {
         decide: async (request) => {
           const answer = await rl.question(
@@ -121,6 +139,23 @@ async function main(): Promise<void> {
   } finally {
     agent.close();
     rl.close();
+    if (telemetryStore) {
+      printToolQuality(telemetryStore);
+    }
+  }
+}
+
+function printToolQuality(store: SqliteTelemetryStore): void {
+  const ranking = store.toolQualityRanking();
+  if (ranking.length === 0) {
+    return;
+  }
+  process.stdout.write("\ntool quality:\n");
+  for (const tool of ranking) {
+    const err = `${Math.round(tool.errorRate * 100)}% err`;
+    process.stdout.write(
+      `  ${tool.capability}: ${tool.calls} calls · ${err} · ${Math.round(tool.avgDurationMs)}ms avg\n`,
+    );
   }
 }
 
