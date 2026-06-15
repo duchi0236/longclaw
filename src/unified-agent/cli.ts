@@ -13,7 +13,10 @@ import { createInterface, type Interface } from "node:readline/promises";
 import { DatabaseSync } from "node:sqlite";
 import type { RuntimeEvent, RuntimeEventSink } from "../../packages/loop-runtime/src/index.js";
 import { LocalSandbox } from "../../packages/sandbox-core/src/index.js";
-import { SqliteTelemetryStore } from "../../packages/telemetry-store/src/index.js";
+import {
+  evaluatePurification,
+  SqliteTelemetryStore,
+} from "../../packages/telemetry-store/src/index.js";
 import { parseCliArgs } from "./cli-args.js";
 import { DEEPSEEK_MODEL, startAgent, type UnifiedAgent } from "./index.js";
 
@@ -103,6 +106,18 @@ async function main(): Promise<void> {
     }
   };
 
+  // Self-purification: tools that failed too often in prior runs (recorded in
+  // the telemetry DB) are denied from this session's capability snapshot.
+  const deprecated = telemetryStore
+    ? evaluatePurification(telemetryStore.toolQualityRanking())
+    : [];
+  if (deprecated.length > 0) {
+    process.stdout.write("deprecating tools from prior runs:\n");
+    for (const verdict of deprecated) {
+      process.stdout.write(`  ${verdict.capability} (${verdict.reason})\n`);
+    }
+  }
+
   const agent = startAgent(
     {
       model: DEEPSEEK_MODEL,
@@ -110,6 +125,9 @@ async function main(): Promise<void> {
       policy: options.policy,
       systemPrompt: SYSTEM_PROMPT,
       ...(options.db ? { store: { kind: "sqlite", path: options.db } } : {}),
+      ...(deprecated.length > 0
+        ? { entitlements: { denyPatterns: deprecated.map((verdict) => verdict.capability) } }
+        : {}),
     },
     {
       sandboxProviders: [new LocalSandbox({ workspaceRoot })],
