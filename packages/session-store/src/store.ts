@@ -23,3 +23,25 @@ export interface SessionStore {
   /** Replaces the session's plan state. */
   savePlan(sessionId: string, plan: PlanState): Promise<void>;
 }
+
+/** One session's metadata for listing a user's conversations. */
+export interface SessionSummary {
+  sessionId: string;
+  updatedAt: number;
+}
+
+/**
+ * A session store backed by central, shared storage (one online database many
+ * runtime instances read/write). Adds tenancy: every session has an owner, so
+ * any instance can serve any user's session and a user can list their own
+ * conversations across devices. Centralizing the data is what makes the
+ * conversation truly online and the runtime instances stateless.
+ */
+export interface CentralSessionStore extends SessionStore {
+  /** Records the session's owner on first use; idempotent. */
+  ensureSession(sessionId: string, ownerUserId: string): Promise<void>;
+  /** Lists a user's sessions, most recently updated first. */
+  listSessions(ownerUserId: string): Promise<SessionSummary[]>;
+  /** Returns the owning user id, for access checks; null if unknown. */
+  ownerOf(sessionId: string): Promise<string | null>;
+}
