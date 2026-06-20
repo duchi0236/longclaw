@@ -258,3 +258,7 @@ extensions/diffs-language-pack/assets/viewer-runtime.js
 /.opengrep-out/
 /.crabbox-artifacts
 .comux*
+
+# Unified-agent web console dev workspace + its libSQL session store: runtime
+# state and agent scratch output, never committed (lives in SQLite, not git).
+/web-workspace/
