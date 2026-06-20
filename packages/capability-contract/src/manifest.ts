@@ -12,7 +12,7 @@ export const SANDBOX_KINDS = ["cloud-general", "cloud-repo", "client-node"] as c
 export type SandboxKind = (typeof SANDBOX_KINDS)[number];
 
 /** Low-level primitives a sandbox must offer for a capability to run. */
-export const SANDBOX_PRIMITIVES = ["fs", "net", "proc"] as const;
+export const SANDBOX_PRIMITIVES = ["fs", "net", "proc", "mem"] as const;
 
 /** Sandbox primitive union. */
 export type SandboxPrimitive = (typeof SANDBOX_PRIMITIVES)[number];
@@ -106,7 +106,7 @@ export function validateCapabilityManifest(value: unknown): ManifestValidation {
     !Array.isArray(candidate.sandboxRequires) ||
     !candidate.sandboxRequires.every(isSandboxPrimitive)
   ) {
-    errors.push("sandboxRequires must be an array of fs|net|proc");
+    errors.push("sandboxRequires must be an array of fs|net|proc|mem");
   }
   if (
     !Array.isArray(candidate.providerKinds) ||

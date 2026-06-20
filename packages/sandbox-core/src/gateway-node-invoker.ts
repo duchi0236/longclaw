@@ -46,14 +46,22 @@ export interface NodeRegistryPort {
 // matching capability family.
 const FS_COMMANDS = new Set(["fs.read", "fs.write", "fs.list"]);
 const PROC_COMMANDS = new Set(["system.run"]);
+const NET_COMMANDS = new Set(["web.fetch", "web.search"]);
+const MEM_COMMANDS = new Set(["memory.write", "memory.read", "memory.search"]);
 
 function derivePrimitives(commands: string[]): SandboxPrimitive[] {
   const primitives: SandboxPrimitive[] = [];
   if (commands.some((c) => FS_COMMANDS.has(c))) {
     primitives.push("fs");
   }
+  if (commands.some((c) => NET_COMMANDS.has(c))) {
+    primitives.push("net");
+  }
   if (commands.some((c) => PROC_COMMANDS.has(c))) {
     primitives.push("proc");
+  }
+  if (commands.some((c) => MEM_COMMANDS.has(c))) {
+    primitives.push("mem");
   }
   return primitives;
 }

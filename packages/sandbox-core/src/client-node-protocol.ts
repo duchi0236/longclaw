@@ -39,6 +39,39 @@ interface FsListResult {
   names?: string[];
 }
 
+/** node "web.fetch" response: body plus status and truncation flag. */
+interface WebFetchResult {
+  ok?: boolean;
+  status?: number;
+  body?: string;
+  truncated?: boolean;
+  error?: string | null;
+}
+
+/** node "web.search" response: ranked results plus an optional error. */
+interface WebSearchResult {
+  results?: { title?: string; url?: string; snippet?: string }[];
+  error?: string | null;
+}
+
+/** node "memory.write" response: the stored key. */
+interface MemoryWriteResult {
+  key?: string;
+  error?: string | null;
+}
+
+/** node "memory.read" response: the note text plus a found flag. */
+interface MemoryReadResult {
+  found?: boolean;
+  text?: string;
+}
+
+/** node "memory.search" response: matched entries. */
+interface MemorySearchResult {
+  results?: { key?: string; text?: string; tags?: string[] }[];
+  error?: string | null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
@@ -74,6 +107,44 @@ export function capabilityToNodeCommand(capability: string, args: unknown): Node
       };
     case "fs.list":
       return { command: "fs.list", params: { prefix: String(a.prefix ?? "") } };
+    case "web.fetch": {
+      const timeoutMs = typeof a.timeoutMs === "number" ? a.timeoutMs : undefined;
+      return {
+        command: "web.fetch",
+        params: {
+          url: String(a.url ?? ""),
+          headers: a.headers ?? null,
+          maxBytes: typeof a.maxBytes === "number" ? a.maxBytes : null,
+          timeoutMs: timeoutMs ?? null,
+        },
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      };
+    }
+    case "web.search": {
+      const limit = typeof a.limit === "number" ? a.limit : undefined;
+      return {
+        command: "web.search",
+        params: { query: String(a.query ?? ""), limit: limit ?? null },
+      };
+    }
+    case "memory.write":
+      return {
+        command: "memory.write",
+        params: {
+          key: typeof a.key === "string" ? a.key : null,
+          text: String(a.text ?? ""),
+          tags: Array.isArray(a.tags) ? a.tags : null,
+        },
+      };
+    case "memory.read":
+      return { command: "memory.read", params: { key: String(a.key ?? "") } };
+    case "memory.search": {
+      const limit = typeof a.limit === "number" ? a.limit : undefined;
+      return {
+        command: "memory.search",
+        params: { query: String(a.query ?? ""), limit: limit ?? null },
+      };
+    }
     default:
       throw new Error(`no client-node mapping for capability "${capability}"`);
   }
@@ -109,6 +180,73 @@ export function nodeResultToCapability(capability: string, result: unknown): Cap
     case "fs.list": {
       const list = result as FsListResult;
       return { isError: false, output: (list.names ?? []).join("\n") };
+    }
+    case "web.fetch": {
+      const res = result as WebFetchResult;
+      const ok =
+        res.ok ?? (typeof res.status === "number" && res.status >= 200 && res.status < 300);
+      const body = res.body ?? "";
+      if (!ok) {
+        return {
+          isError: true,
+          output: (res.error ?? `http ${res.status ?? "?"}`).trim(),
+          details: res,
+        };
+      }
+      return {
+        isError: false,
+        output: res.truncated ? `${body}\n[output truncated]` : body,
+        details: res,
+      };
+    }
+    case "web.search": {
+      const res = result as WebSearchResult;
+      if (res.error) {
+        return { isError: true, output: res.error, details: res };
+      }
+      const results = res.results ?? [];
+      const output =
+        results.length === 0
+          ? "no results"
+          : results
+              .map((entry, index) => {
+                const head = `${index + 1}. ${entry.title ?? ""} — ${entry.url ?? ""}`;
+                return entry.snippet ? `${head}\n   ${entry.snippet}` : head;
+              })
+              .join("\n");
+      return { isError: false, output, details: res };
+    }
+    case "memory.write": {
+      const res = result as MemoryWriteResult;
+      if (res.error || !res.key) {
+        return { isError: true, output: res.error ?? "memory.write failed", details: res };
+      }
+      return { isError: false, output: `stored: ${res.key}`, details: res };
+    }
+    case "memory.read": {
+      const res = result as MemoryReadResult;
+      if (res.found === false || res.text === undefined) {
+        return { isError: true, output: "memory not found" };
+      }
+      return { isError: false, output: res.text };
+    }
+    case "memory.search": {
+      const res = result as MemorySearchResult;
+      if (res.error) {
+        return { isError: true, output: res.error, details: res };
+      }
+      const results = res.results ?? [];
+      const output =
+        results.length === 0
+          ? "no matches"
+          : results
+              .map((entry, index) => {
+                const firstLine = (entry.text ?? "").split("\n", 1)[0] ?? "";
+                const tags = entry.tags && entry.tags.length > 0 ? ` [${entry.tags.join(", ")}]` : "";
+                return `${index + 1}. ${entry.key ?? ""}: ${firstLine}${tags}`;
+              })
+              .join("\n");
+      return { isError: false, output, details: res };
     }
     default:
       return { isError: true, output: `unexpected client-node result for "${capability}"` };
