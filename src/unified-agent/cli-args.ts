@@ -15,6 +15,8 @@ export interface CliOptions {
   telemetryDb?: string;
   /** OTLP/HTTP traces endpoint; undefined disables trace export. */
   otlpEndpoint?: string;
+  /** Central libSQL/Turso URL (file: / libsql://); puts conversation online. */
+  libsqlUrl?: string;
   /** Execution policy for tool calls. */
   policy: ExecutionPolicy;
   /** Agent mode: which brain drives the loop. */
@@ -36,6 +38,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let db: string | undefined;
   let telemetryDb: string | undefined;
   let otlpEndpoint: string | undefined;
+  let libsqlUrl: string | undefined;
   let policy: ExecutionPolicy = "ask";
   let mode: "standard" | "deep" | "team" = "standard";
   const positionals: string[] = [];
@@ -46,7 +49,8 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       case "--workspace":
       case "--db":
       case "--telemetry-db":
-      case "--otlp-endpoint": {
+      case "--otlp-endpoint":
+      case "--libsql-url": {
         const value = argv[++i];
         if (value === undefined) {
           throw new Error(`${arg} requires a value`);
@@ -57,8 +61,10 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
           db = value;
         } else if (arg === "--telemetry-db") {
           telemetryDb = value;
-        } else {
+        } else if (arg === "--otlp-endpoint") {
           otlpEndpoint = value;
+        } else {
+          libsqlUrl = value;
         }
         break;
       }
@@ -94,6 +100,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     ...(db !== undefined ? { db } : {}),
     ...(telemetryDb !== undefined ? { telemetryDb } : {}),
     ...(otlpEndpoint !== undefined ? { otlpEndpoint } : {}),
+    ...(libsqlUrl !== undefined ? { libsqlUrl } : {}),
     policy,
     mode,
     ...(positionals.length > 0 ? { prompt: positionals.join(" ") } : {}),

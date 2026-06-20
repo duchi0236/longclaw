@@ -3,6 +3,7 @@
 // verified without credentials. Tool-call names use the encoded form a real
 // model returns (dots become underscores) to exercise the decode path.
 import { afterEach, describe, expect, it } from "vitest";
+import type { AcpSessionTransport, AcpStep } from "../../packages/brain-acp/src/index.js";
 import type { CompleteFn } from "../../packages/brain-inference/src/index.js";
 import type { AssistantMessage, Context, Model } from "../../packages/llm-core/src/index.js";
 import type { RuntimeEvent } from "../../packages/loop-runtime/src/index.js";
@@ -60,6 +61,29 @@ function turnInput(userMessage: string) {
     binding: { kind: "cloud-general" as const },
     mode: { id: "standard", maxParallelToolCalls: 1, planningEnabled: false },
   };
+}
+
+/** A scripted ACP transport standing in for Claude Code; records what it got. */
+function scriptedAcp(steps: AcpStep[]) {
+  let index = 0;
+  const prompts: { sessionId: string; userText: string }[] = [];
+  const toolResults: {
+    sessionId: string;
+    callId: string;
+    result: { isError: boolean; output: string };
+  }[] = [];
+  const next = (): AcpStep => steps[index++] ?? { kind: "final", text: "[script exhausted]" };
+  const transport: AcpSessionTransport = {
+    prompt: (sessionId, userText) => {
+      prompts.push({ sessionId, userText });
+      return Promise.resolve(next());
+    },
+    provideToolResult: (sessionId, callId, result) => {
+      toolResults.push({ sessionId, callId, result });
+      return Promise.resolve(next());
+    },
+  };
+  return { transport, prompts, toolResults };
 }
 
 const agents: { close(): void }[] = [];
@@ -141,6 +165,37 @@ describe("createUnifiedAgent", () => {
     await agent.runtime.runTurn(turnInput("write x"));
     expect(asked).toBe(true);
     expect(sandbox.files.has("a.txt")).toBe(false);
+  });
+
+  it('mode "acp" delegates the turn to the injected ACP transport, tools stay in the sandbox', async () => {
+    const sandbox = new MemorySandbox();
+    const acp = scriptedAcp([
+      { kind: "tool_request", callId: "a1", capability: "fs.write", args: { path: "n.txt", content: "hi" } },
+      { kind: "final", text: "saved it" },
+    ]);
+    const agent = createUnifiedAgent(
+      { model: TEST_MODEL, mode: "acp", policy: "auto" },
+      {
+        // The completion must never be used in ACP mode; fail loudly if it is.
+        complete: () => Promise.reject(new Error("inference must not run in acp mode")),
+        sandboxProviders: [sandbox],
+        acpTransport: acp.transport,
+      },
+    );
+    agents.push(agent);
+
+    const result = await agent.runtime.runTurn(turnInput("save a note"));
+    expect(result.status).toBe("finished");
+    expect(result.responses).toContain("saved it");
+    expect(sandbox.files.get("n.txt")).toBe("hi");
+    expect(acp.prompts).toEqual([{ sessionId: "s1", userText: "save a note" }]);
+    expect(acp.toolResults[0]?.result).toEqual({ isError: false, output: "wrote n.txt" });
+  });
+
+  it('mode "acp" without an acpTransport fails fast', () => {
+    expect(() => createUnifiedAgent({ model: TEST_MODEL, mode: "acp" }, { complete: fakeComplete([]) })).toThrow(
+      /acpTransport/,
+    );
   });
 });
 

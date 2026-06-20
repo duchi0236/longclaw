@@ -13,6 +13,10 @@ import { createInterface, type Interface } from "node:readline/promises";
 import { DatabaseSync } from "node:sqlite";
 import type { RuntimeEvent, RuntimeEventSink } from "../../packages/loop-runtime/src/index.js";
 import { LocalSandbox } from "../../packages/sandbox-core/src/index.js";
+import {
+  LibsqlSessionStore,
+  type CentralSessionStore,
+} from "../../packages/session-store/src/index.js";
 import { OtlpTraceExporter } from "../../packages/telemetry-otlp/src/index.js";
 import {
   evaluatePurification,
@@ -76,7 +80,13 @@ async function runTurn(
 async function repl(agent: UnifiedAgent, rl: Interface, mode: Mode): Promise<void> {
   process.stdout.write("unified agent ready. type a message, or 'exit' to quit.\n");
   for (;;) {
-    const input = (await rl.question("\n> ")).trim();
+    let input: string;
+    try {
+      input = (await rl.question("\n> ")).trim();
+    } catch {
+      // stdin closed (Ctrl-D / EOF / piped input exhausted) — exit cleanly.
+      break;
+    }
     if (input === "") {
       continue;
     }
@@ -112,6 +122,17 @@ async function main(): Promise<void> {
     }
   };
 
+  // Central libSQL store puts conversation data online: any instance loads it,
+  // and the session is owned (multi-tenant). Built async, so injected directly.
+  let libsqlClose: (() => void) | undefined;
+  let centralStore: CentralSessionStore | undefined;
+  if (options.libsqlUrl) {
+    const built = await LibsqlSessionStore.create({ url: options.libsqlUrl });
+    centralStore = built.store;
+    libsqlClose = built.close;
+    await centralStore.ensureSession("cli", "local-user");
+  }
+
   // Self-purification: tools that failed too often in prior runs (recorded in
   // the telemetry DB) are denied from this session's capability snapshot.
   const deprecated = telemetryStore
@@ -138,6 +159,7 @@ async function main(): Promise<void> {
     {
       sandboxProviders: [new LocalSandbox({ workspaceRoot })],
       telemetry,
+      ...(centralStore ? { store: centralStore } : {}),
       approvalGate: {
         decide: async (request) => {
           const answer = await rl.question(
@@ -163,6 +185,7 @@ async function main(): Promise<void> {
   } finally {
     agent.close();
     rl.close();
+    libsqlClose?.();
     if (telemetryStore) {
       printToolQuality(telemetryStore);
     }

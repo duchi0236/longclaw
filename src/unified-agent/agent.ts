@@ -3,6 +3,7 @@
 // the LLM call is injected (see inference.ts for the production wiring), the
 // sandbox providers default to in-memory, and the store comes from config.
 
+import { createAcpBrain, type AcpSessionTransport } from "../../packages/brain-acp/src/index.js";
 import type { AgentBrain, InferencePort } from "../../packages/brain-contract/src/index.js";
 import { createDeepBrain } from "../../packages/brain-deep/src/index.js";
 import { createInferencePort, type CompleteFn } from "../../packages/brain-inference/src/index.js";
@@ -21,7 +22,7 @@ import {
   SandboxRouter,
   type SandboxProvider,
 } from "../../packages/sandbox-core/src/index.js";
-import { createSessionStore } from "../../packages/session-store/src/index.js";
+import { createSessionStore, type SessionStore } from "../../packages/session-store/src/index.js";
 import { buildModel, type AgentConfig } from "./config.js";
 
 /** Injected dependencies for assembly. `complete` is required; production
@@ -34,6 +35,12 @@ export interface UnifiedAgentDeps {
   sandboxProviders?: SandboxProvider[];
   /** Telemetry sink for runtime events (tool calls, approvals, turns). */
   telemetry?: RuntimeEventSink;
+  /** A prebuilt session store (e.g. central libSQL). Takes precedence over
+   * config.store; the caller owns its lifecycle. */
+  store?: SessionStore;
+  /** ACP session transport, required when config.mode is "acp". Drives an
+   * external agent harness (e.g. Claude Code); tools/approval stay in OpenClaw. */
+  acpTransport?: AcpSessionTransport;
 }
 
 /** A built agent plus ownership of its resources. */
@@ -47,7 +54,18 @@ const AUTO_APPROVE: ApprovalGate = { decide: () => Promise.resolve("allow") };
 
 type BrainOptions = { systemPrompt?: string };
 
-function selectBrain(mode: AgentConfig["mode"], options: BrainOptions): AgentBrain {
+function selectBrain(
+  mode: AgentConfig["mode"],
+  options: BrainOptions,
+  acpTransport?: AcpSessionTransport,
+): AgentBrain {
+  if (mode === "acp") {
+    if (!acpTransport) {
+      throw new Error('mode "acp" requires an acpTransport dependency');
+    }
+    // The ACP harness owns its own prompting; systemPrompt is not forwarded.
+    return createAcpBrain({ transport: acpTransport });
+  }
   if (mode === "deep") {
     return createDeepBrain(options);
   }
@@ -111,7 +129,9 @@ export function createUnifiedAgent(config: AgentConfig, deps: UnifiedAgentDeps):
     router.register(provider);
   }
 
-  const storeHandle = config.store ? createSessionStore(config.store) : undefined;
+  // An injected store (e.g. central libSQL) wins; otherwise build from config.
+  const storeHandle = !deps.store && config.store ? createSessionStore(config.store) : undefined;
+  const store = deps.store ?? storeHandle?.store;
 
   // Team mode delegates subtasks to standard-brain sub-agents; other modes
   // run a single brain with no spawning.
@@ -129,14 +149,14 @@ export function createUnifiedAgent(config: AgentConfig, deps: UnifiedAgentDeps):
       : undefined;
 
   const runtime = new LoopRuntime({
-    brain: selectBrain(config.mode, brainOptions),
+    brain: selectBrain(config.mode, brainOptions, deps.acpTransport),
     manifests: CORE_CAPABILITY_MANIFESTS,
     router,
     inference,
     approvalGate,
     policy,
     ...(config.entitlements ? { entitlements: config.entitlements } : {}),
-    ...(storeHandle ? { store: storeHandle.store } : {}),
+    ...(store ? { store } : {}),
     ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
     ...(spawnSubtask ? { spawnSubtask } : {}),
   });

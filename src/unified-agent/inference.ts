@@ -8,13 +8,18 @@ import { completeSimple } from "../../packages/llm-runtime/src/index.js";
 import { registerBuiltInApiProviders } from "../llm/providers/register-builtins.js";
 import type { ModelConfig } from "./config.js";
 
-/** Builds a real completion function for a model config. Throws if the named
- * API key env var is unset, so misconfiguration fails fast at startup. */
+/** Builds a real completion function for a model config. The API key is read
+ * lazily on first use, not at construction: brains that never call inference
+ * (e.g. the ACP brain, which delegates the turn to an external harness) must be
+ * able to start without a key. A model-driven brain still fails fast — on its
+ * first completion call — with the same clear message. */
 export function createCompleteFromConfig(modelConfig: ModelConfig): CompleteFn {
   registerBuiltInApiProviders();
-  const apiKey = process.env[modelConfig.apiKeyEnv];
-  if (!apiKey) {
-    throw new Error(`missing API key: set ${modelConfig.apiKeyEnv}`);
-  }
-  return (model, context) => completeSimple(model, context, { apiKey, maxTokens: model.maxTokens });
+  return (model, context) => {
+    const apiKey = process.env[modelConfig.apiKeyEnv];
+    if (!apiKey) {
+      throw new Error(`missing API key: set ${modelConfig.apiKeyEnv}`);
+    }
+    return completeSimple(model, context, { apiKey, maxTokens: model.maxTokens });
+  };
 }

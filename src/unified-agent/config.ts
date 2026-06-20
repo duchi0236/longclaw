@@ -30,8 +30,10 @@ export interface ModelConfig {
  * an in-memory, ask-before-acting agent. */
 export interface AgentConfig {
   model: ModelConfig;
-  /** Agent mode = which brain drives the loop. Defaults to "standard". */
-  mode?: "standard" | "deep" | "team";
+  /** Agent mode = which brain drives the loop. Defaults to "standard".
+   * "acp" delegates the loop to an external agent harness (e.g. Claude Code)
+   * over ACP; it requires an `acpTransport` dependency at assembly time. */
+  mode?: "standard" | "deep" | "team" | "acp";
   store?: SessionStoreConfig;
   policy?: ExecutionPolicy;
   systemPrompt?: string;
