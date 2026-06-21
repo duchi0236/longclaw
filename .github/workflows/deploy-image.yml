@@ -1,0 +1,69 @@
+name: Deploy Image (longclaw → GHCR)
+
+# Minimal fork-friendly image build for self-hosting on Alibaba Cloud SWAS.
+# Builds the repo Dockerfile on a GitHub-hosted runner (16 GB RAM) and pushes
+# a single-arch linux/amd64 runtime image to GHCR. Avoids the gated official
+# docker-release.yml (which needs org secrets / environment approvals).
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - feat/brain-tool-separation
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".agents/**"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free up runner disk space
+        run: |
+          echo "Before:"; df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
+          sudo docker image prune -af || true
+          echo "After:"; df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute lowercase image name
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.img.outputs.name }}:latest
+            ${{ steps.img.outputs.name }}:2026.6.2
+          # No bundled plugins keeps the build lean. Add names (comma-separated)
+          # here later if you need specific extensions baked into the image.
+          build-args: |
+            OPENCLAW_EXTENSIONS=
